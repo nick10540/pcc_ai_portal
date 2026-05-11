@@ -1,0 +1,105 @@
+# LiteLLM RBAC + Rate Limit + Budget Config — PCC AI Portal
+#
+# RBAC 5 Tiers:
+#   basic    → haiku only,          500K tokens/month
+#   standard → haiku + sonnet,      2M tokens/month
+#   pro      → all (with limit),    5M tokens/month
+#   power    → all,                 20M tokens/month
+#   admin    → all,                 unlimited
+
+# ── Virtual Keys / API Key Config ─────────────────────────────
+# หมายเหตุ: ใน production key จะสร้างผ่าน LiteLLM API
+# ไฟล์นี้กำหนด "default settings" ต่อ key_alias (tier)
+#
+# สร้าง key ตัวอย่างด้วย:
+#   POST /key/generate
+#   { "key_alias": "basic-demo", "models": ["claude-haiku"],
+#     "max_budget": 50, "budget_duration": "1mo",
+#     "tpm_limit": 16667, "rpm_limit": 30 }
+
+# ── Rate Limits per Tier ──────────────────────────────────────
+# คำนวณจาก quota tokens/month หารด้วยวันและชั่วโมง
+# tpm = tokens per minute (ป้องกัน burst), rpm = requests per minute
+
+tier_defaults:
+  basic:
+    models:
+      - claude-haiku
+    max_budget: 50          # USD/month (~฿1,750)
+    budget_duration: "1mo"
+    tpm_limit: 16667        # 500K tokens / 30 days / 24h / 60min
+    rpm_limit: 30
+
+  standard:
+    models:
+      - claude-haiku
+      - claude-sonnet
+    max_budget: 200         # USD/month (~฿7,000)
+    budget_duration: "1mo"
+    tpm_limit: 66667        # 2M tokens / 30 days / 24h / 60min
+    rpm_limit: 60
+
+  pro:
+    models:
+      - claude-haiku
+      - claude-sonnet
+      - claude-opus
+    max_budget: 500         # USD/month (~฿17,500)
+    budget_duration: "1mo"
+    tpm_limit: 166667       # 5M tokens / 30 days / 24h / 60min
+    rpm_limit: 120
+
+  power:
+    models:
+      - claude-haiku
+      - claude-sonnet
+      - claude-opus
+    max_budget: 2000        # USD/month (~฿70,000)
+    budget_duration: "1mo"
+    tpm_limit: 666667       # 20M tokens / 30 days / 24h / 60min
+    rpm_limit: 300
+
+  admin:
+    models:
+      - claude-haiku
+      - claude-sonnet
+      - claude-opus
+    max_budget: null        # unlimited
+    budget_duration: "1mo"
+    tpm_limit: null         # unlimited
+    rpm_limit: null         # unlimited
+
+# ── Model Access Rules (enforced by custom backend middleware) ─
+# LiteLLM ตรวจสอบ model ใน allowed list ของ key
+# Custom backend inject model list ตาม tier ก่อนส่ง request
+
+model_access:
+  basic:    ["claude-haiku"]
+  standard: ["claude-haiku", "claude-sonnet"]
+  pro:      ["claude-haiku", "claude-sonnet", "claude-opus"]
+  power:    ["claude-haiku", "claude-sonnet", "claude-opus"]
+  admin:    ["claude-haiku", "claude-sonnet", "claude-opus"]
+
+# ── Department Budget Alerts ──────────────────────────────────
+# แจ้งเตือนเมื่อใช้ budget ถึง threshold
+# ส่งผ่าน webhook → custom backend → email/LINE notify
+
+budget_alerts:
+  - type: "department"
+    threshold: 0.8          # 80% ของ budget department
+    webhook_url: "http://backend:8000/webhooks/budget-alert"
+  - type: "user"
+    threshold: 0.9          # 90% ของ quota user
+    webhook_url: "http://backend:8000/webhooks/budget-alert"
+
+# ── Guardrails ────────────────────────────────────────────────
+# Pre-call hook: ตรวจ PII ภาษาไทย (via custom backend)
+# Post-call hook: บันทึก audit log
+
+guardrails:
+  - guardrail_name: "thai-pii-detector"
+    litellm_params:
+      guardrail: custom
+      mode: "pre_call"
+      guardrail_endpoint: "http://backend:8000/guardrails/pii-check"
+      default_on: true
